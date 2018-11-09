@@ -5,6 +5,8 @@ namespace App\Service\WeatherService\Clients;
 use App\Service\WeatherService\WeatherDTO;
 use App\Services\WeatherService\Exceptions\ApiClientException;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ClientException;
+use Psr\Http\Message\ResponseInterface;
 
 class OpenWeatherMapClient implements WeatherApiClient
 {
@@ -56,15 +58,19 @@ class OpenWeatherMapClient implements WeatherApiClient
      * @param string $endpoint API endpoint
      * @param array  $data     Параметры запроса
      *
-     * @return mixed
+     * @return array
      */
-    protected function request(string $endpoint, array $data)
+    protected function request(string $endpoint, array $data): array
     {
         $query = $this->buildQuery($data);
 
-        $response = $this->client->get(self::API_ROOT . "/{$endpoint}?{$query}");
+        try {
+            $response = $this->client->get(self::API_ROOT . "/{$endpoint}?{$query}");
+        } catch (ClientException $e) {
+            throw new ApiClientException($this->parseApiException($e), $e->getCode());
+        }
 
-        return json_decode($response->getBody()->getContents(), true);
+        return $this->parseApiResponse($response);
     }
 
     /**
@@ -80,6 +86,18 @@ class OpenWeatherMapClient implements WeatherApiClient
         $data['APPID'] = $this->key;
 
         return http_build_query($data);
+    }
+
+    /**
+     * Преобразование ответа api в массив
+     *
+     * @param ResponseInterface $response
+     *
+     * @return array
+     */
+    protected function parseApiResponse(ResponseInterface $response): array
+    {
+        return json_decode($response->getBody()->getContents(), true);
     }
 
     /**
@@ -99,5 +117,25 @@ class OpenWeatherMapClient implements WeatherApiClient
             ->setTemperatureUnits(self::TEMPERATURE_UNITS[$format])
             ->setWindDirection($response['wind']['deg'] ?? null)
             ->setWindSpeed($response['wind']['speed'] ?? null);
+    }
+
+    /**
+     * Получение строки ошибки
+     *
+     * @param ClientException $e
+     *
+     * @return string
+     */
+    protected function parseApiException(ClientException $e): string
+    {
+        if (!$response = $e->getResponse()) {
+            return 'Undefined exception. Code: ' . $e->getCode();
+        }
+
+        if (($content = $this->parseApiResponse($response)) && $content['message']) {
+            return $content['message'];
+        }
+
+        return $response->getReasonPhrase();
     }
 }
